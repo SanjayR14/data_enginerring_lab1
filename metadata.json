@@ -1,0 +1,6 @@
+{
+  "name": "Cloud Cost Intelligence Platform",
+  "description": "Production-oriented cloud budget and cost analytics platform with dataset upload, automated parsing, metadata tracking, and preview.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
