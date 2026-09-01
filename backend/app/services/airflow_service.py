@@ -483,7 +483,7 @@ class AirflowOrchestratorService:
                 "dag_run_id": None,
                 "dataset_id": dataset_id,
                 "batch_id": None,
-                "status": "QUEUED" if dataset else "NOT_FOUND",
+                "status": "UPLOADED" if dataset else "NOT_FOUND",
                 "current_stage": "Awaiting Pipeline Trigger",
                 "message": "Dataset uploaded. Click 'Process Dataset' to launch Airflow DAG pipeline.",
                 "last_updated": dataset.updated_at if dataset else datetime.utcnow(),

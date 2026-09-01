@@ -70,6 +70,16 @@ class KafkaProducerService:
         # Fallback buffer handling if Kafka broker connection is unreachable or timed out
         cls._buffer.append(event)
         logger.info(f"[KAFKA PRODUCER] Buffered event {event_id} locally (total buffer size: {len(cls._buffer)})")
+
+        if not settings.KAFKA_ENABLED:
+            return {
+                "status": "buffered",
+                "event_id": event_id,
+                "topic": topic,
+                "fallback_mode": True,
+                "kafka_active": False,
+                "consumer_result": "Kafka processing is disabled in this environment."
+            }
         
         # Trigger immediate processing via consumer engine
         from backend.app.services.kafka_consumer import KafkaConsumerService

@@ -72,6 +72,13 @@ class KafkaConsumerService:
         """
         Processes a single event with Validation, Idempotency Check, Retry Logic, and DLQ routing.
         """
+        if not settings.KAFKA_ENABLED:
+            return {
+                "event_id": str(event.get('event_id', 'unknown')),
+                "status": "DISABLED",
+                "message": "Kafka processing is disabled in this environment."
+            }
+
         start_time = time.time()
         event_id = str(event.get('event_id', 'unknown'))
         operation = str(event.get('operation', 'INSERT')).upper()

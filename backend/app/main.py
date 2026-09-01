@@ -28,7 +28,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    start_kafka_consumer_daemon()
+    if settings.KAFKA_ENABLED:
+        start_kafka_consumer_daemon()
 
 # Root endpoint
 @app.get("/", tags=["Root"])
@@ -36,7 +37,7 @@ def read_root():
     return {
         "title": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "phase": "Project Foundation & Dataset Upload",
+        "phase": "Phase 1: Project Foundation & Dataset Upload",
         "status": "online",
         "docs_url": "/docs"
     }

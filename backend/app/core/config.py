@@ -35,6 +35,7 @@ class Settings:
     DATABRICKS_SCHEMA: str = os.getenv("DATABRICKS_SCHEMA", "cloud_analytics")
     
     # Kafka Configuration
+    KAFKA_ENABLED: bool = os.getenv("KAFKA_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
     KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     KAFKA_TOPIC: str = os.getenv("KAFKA_TOPIC", "cloud-cost-events")
     KAFKA_GROUP_ID: str = os.getenv("KAFKA_GROUP_ID", "cloud-cost-consumer")
@@ -49,8 +50,10 @@ class Settings:
 
     @property
     def DATABASE_URL(self) -> str:
-        # Strictly use SQLite
+        # Use a dedicated SQLite database for test runs so CI/local tests are isolated
         os.makedirs("./data", exist_ok=True)
+        if self.ENV.lower() == "test" or "PYTEST_CURRENT_TEST" in os.environ:
+            return "sqlite:///./data/test_cloud_cost.db"
         return "sqlite:///./data/cloud_cost.db"
 
 settings = Settings()

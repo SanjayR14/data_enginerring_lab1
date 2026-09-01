@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      ENV: test
+      KAFKA_ENABLED: "false"
 
     steps:
       - name: Check out code

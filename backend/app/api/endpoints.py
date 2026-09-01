@@ -86,14 +86,6 @@ async def upload_dataset(
             except Exception as e:
                 logging.getLogger("kafka_producer").error(f"Failed to publish to Kafka: {e}")
                 
-            # Automatically trigger the Airflow DAG for the new dataset
-            from backend.app.services.airflow_service import AirflowOrchestratorService
-            try:
-                AirflowOrchestratorService.trigger_dag_run(dataset_id=dataset.id, db=db)
-                logging.getLogger("airflow_service").info(f"Successfully triggered Airflow DAG for dataset {dataset.id}")
-            except Exception as e:
-                logging.getLogger("airflow_service").error(f"Failed to trigger Airflow DAG for dataset {dataset.id}: {e}")
-
         cols = []
         if dataset.columns_json:
             try:
