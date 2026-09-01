@@ -560,6 +560,7 @@ class OLAPEngine:
         interpretation = f"Total allocated cloud budget is ${tot_budget:,.2f} with ${tot_cost:,.2f} spent ({avg_util}% utilization). " \
                          f"{status_counts.get('Over Budget', 0)} departments are Over Budget."
 
+        dept_breakdown = dept_bg.to_dict(orient="records")
         return {
             "total_budget": tot_budget,
             "actual_cost": tot_cost,
@@ -568,7 +569,8 @@ class OLAPEngine:
             "forecast_monthly_cost": tot_forecast,
             "forecast_variance": round(tot_forecast - tot_budget, 2),
             "status_summary": status_counts,
-            "data": dept_bg.to_dict(orient="records"),
+            "data": dept_breakdown,
+            "department_budget_breakdown": dept_breakdown,
             "interpretation": interpretation
         }
 

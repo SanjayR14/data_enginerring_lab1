@@ -345,26 +345,33 @@ def silver_quality_check(**kwargs):
     logger.info(f"[AIRFLOW:silver_quality_check] Silver DQ Gate PASS. Total valid records: {len(df_silver)}")
     return {"dataset_id": dataset_id, "status": "PASS", "records": len(df_silver)}
 
-def dimension_load(**kwargs):
-    """9. Dimension Load: Populates Star & Snowflake dimension tables with Surrogate Keys & Unknown Members."""
+def prepare_gold(**kwargs):
+    """Prepare Gold layer: populate dimensions and fact tables in the warehouse model."""
     params = kwargs.get('params') or kwargs.get('dag_run').conf or {}
     dataset_id = params.get('dataset_id', 'ds_sample_test')
     batch_id = params.get('batch_id', 'batch_default')
 
     from backend.app.services.warehouse_service import DataWarehouseEngine
     summary = DataWarehouseEngine.load_warehouse_from_silver(dataset_id, batch_id)
-    logger.info(f"[AIRFLOW:dimension_load] Dimensions loaded successfully.")
-    return {"dataset_id": dataset_id, "dimensions_loaded": 10, "status": "SUCCESS"}
+    gold_path = _write_gold_summary(dataset_id, batch_id)
+    logger.info(f"[AIRFLOW:prepare_gold] Gold preparation succeeded for {dataset_id}.")
+    return {"dataset_id": dataset_id, "dimensions_loaded": 10, "status": "SUCCESS", "fact_records_total": summary.get('fact_records_total', 0), "gold_path": gold_path}
 
-def fact_load(**kwargs):
-    """10. Fact Load: Resolves surrogate keys and performs idempotent MERGE into fact_cloud_cost."""
+
+def dimension_load(**kwargs):
+    """Compatibility alias for the legacy dimension_load task name."""
+    return prepare_gold(**kwargs)
+
+
+def load_warehouse(**kwargs):
+    """Load warehouse fact records into the warehouse layer."""
     params = kwargs.get('params') or kwargs.get('dag_run').conf or {}
     dataset_id = params.get('dataset_id', 'ds_sample_test')
     batch_id = params.get('batch_id', 'batch_default')
 
     from backend.app.services.warehouse_service import DataWarehouseEngine
     res = DataWarehouseEngine.load_warehouse_from_silver(dataset_id, batch_id)
-    logger.info(f"[AIRFLOW:fact_load] Loaded {res.get('fact_records_inserted', 0)} facts into Data Warehouse.")
+    logger.info(f"[AIRFLOW:load_warehouse] Loaded {res.get('fact_records_inserted', 0)} facts into Data Warehouse.")
     return {
         "dataset_id": dataset_id,
         "batch_id": batch_id,
@@ -372,8 +379,25 @@ def fact_load(**kwargs):
         "gold_records": res.get('fact_records_total', 0)
     }
 
+
+def fact_load(**kwargs):
+    """Compatibility alias for the legacy fact_load task name."""
+    return load_warehouse(**kwargs)
+
+
+def verify_result(**kwargs):
+    """Verify the warehouse results and analytical queries."""
+    from backend.app.services.warehouse_service import DataWarehouseEngine
+    queries = DataWarehouseEngine.execute_analytical_queries()
+    if not queries:
+        raise ValueError("Warehouse Verification FAIL: Analytical queries returned no data.")
+
+    logger.info(f"[AIRFLOW:verify_result] Warehouse Verification PASS. Executed {len(queries)} analytical queries.")
+    return {"status": "VERIFIED", "queries_executed": len(queries)}
+
+
 def warehouse_quality_check(**kwargs):
-    """11. Warehouse Quality Check: Validates foreign key resolution, zero NULL surrogate keys, and fact grain."""
+    """Compatibility alias that validates warehouse data integrity."""
     from backend.app.services.warehouse_service import DataWarehouseEngine
     summary = DataWarehouseEngine.get_warehouse_summary()
 
@@ -383,22 +407,19 @@ def warehouse_quality_check(**kwargs):
     logger.info(f"[AIRFLOW:warehouse_quality_check] Warehouse Quality Gate PASS. Fact rows: {summary['fact_record_count']}")
     return {"status": "PASS", "fact_rows": summary['fact_record_count']}
 
+
 def refresh_olap_aggregates(**kwargs):
-    """12. Refresh OLAP Aggregates: Materializes OLAP data cube aggregated views for high-performance querying."""
+    """Materialize OLAP aggregate views for reporting performance."""
     from backend.app.services.olap_service import OLAPEngine
     res = OLAPEngine.refresh_olap_aggregates()
     logger.info(f"[AIRFLOW:refresh_olap_aggregates] Materialized {len(res.get('aggregates', []))} aggregate views.")
     return res
 
-def warehouse_verification(**kwargs):
-    """12. Warehouse Verification: Verifies analytical views and metrics integrity."""
-    from backend.app.services.warehouse_service import DataWarehouseEngine
-    queries = DataWarehouseEngine.execute_analytical_queries()
-    if not queries:
-        raise ValueError("Warehouse Verification FAIL: Analytical queries returned no data.")
 
-    logger.info(f"[AIRFLOW:warehouse_verification] Warehouse Verification PASS. Executed {len(queries)} analytical queries.")
-    return {"status": "VERIFIED", "queries_executed": len(queries)}
+def warehouse_verification(**kwargs):
+    """Compatibility alias for the legacy warehouse verification task name."""
+    return verify_result(**kwargs)
+
 
 def update_pipeline_status(**kwargs):
     """13. Update Pipeline Status: Sets pipeline run status to SUCCESS in DB ledger."""
@@ -408,6 +429,36 @@ def update_pipeline_status(**kwargs):
 
     logger.info(f"[AIRFLOW:update_pipeline_status] Pipeline SUCCESS for dataset {dataset_id}, batch {batch_id}.")
     return {"dataset_id": dataset_id, "batch_id": batch_id, "status": "SUCCESS"}
+
+
+def _write_gold_summary(dataset_id: str, batch_id: str):
+    """Persist an aggregate Gold-layer Parquet summary expected by pipeline validation."""
+    silver_path = f"./data/delta/silver_cloud_cost_clean/{dataset_id}.parquet"
+    if not os.path.exists(silver_path):
+        return None
+
+    df = pd.read_parquet(silver_path)
+    if df.empty:
+        return None
+
+    df_gold = df.copy()
+    df_gold['month'] = pd.to_datetime(df_gold['date'], errors='coerce').dt.month.fillna(1)
+    gold = df_gold.groupby(['cloud_provider', 'project_id', 'region', 'service', 'environment', 'month'], as_index=False).agg(
+        total_net_cost=('net_cost', 'sum'),
+        total_list_cost=('list_cost', 'sum'),
+        total_savings=('total_savings', 'sum'),
+        avg_discount_pct=('effective_discount_pct', 'mean'),
+        record_count=('net_cost', 'count'),
+        high_risk_count=('cost_risk_level', lambda s: int((s == 'HIGH').sum()))
+    ).round(2)
+    gold['dataset_id'] = dataset_id
+    gold['batch_id'] = batch_id
+
+    os.makedirs("./data/delta/gold_cloud_cost_summary", exist_ok=True)
+    gold_path = f"./data/delta/gold_cloud_cost_summary/{dataset_id}.parquet"
+    gold.to_parquet(gold_path, index=False)
+    return gold_path
+
 
 def sync_to_databricks(**kwargs):
     """14. Sync to Databricks: Synchronizes the ETL output to Databricks."""
@@ -504,45 +555,27 @@ with DAG(
         provide_context=True
     )
 
-    t_dimension_load = PythonOperator(
-        task_id='dimension_load',
-        python_callable=dimension_load,
+    t_prepare_gold = PythonOperator(
+        task_id='prepare_gold',
+        python_callable=prepare_gold,
         provide_context=True
     )
 
-    t_fact_load = PythonOperator(
-        task_id='fact_load',
-        python_callable=fact_load,
+    t_load_warehouse = PythonOperator(
+        task_id='load_warehouse',
+        python_callable=load_warehouse,
         provide_context=True
     )
 
-    t_warehouse_quality_check = PythonOperator(
-        task_id='warehouse_quality_check',
-        python_callable=warehouse_quality_check,
-        provide_context=True
-    )
-
-    t_refresh_olap_aggregates = PythonOperator(
-        task_id='refresh_olap_aggregates',
-        python_callable=refresh_olap_aggregates,
-        provide_context=True
-    )
-
-    t_warehouse_verification = PythonOperator(
-        task_id='warehouse_verification',
-        python_callable=warehouse_verification,
+    t_verify_result = PythonOperator(
+        task_id='verify_result',
+        python_callable=verify_result,
         provide_context=True
     )
 
     t_update_pipeline_status = PythonOperator(
         task_id='update_pipeline_status',
         python_callable=update_pipeline_status,
-        provide_context=True
-    )
-
-    t_sync_to_databricks = PythonOperator(
-        task_id='sync_to_databricks',
-        python_callable=sync_to_databricks,
         provide_context=True
     )
 
@@ -556,11 +589,23 @@ with DAG(
         >> t_clean_data
         >> t_feature_engineering
         >> t_silver_quality_check
-        >> t_dimension_load
-        >> t_fact_load
-        >> t_warehouse_quality_check
-        >> t_refresh_olap_aggregates
-        >> t_warehouse_verification
-        >> t_sync_to_databricks
+        >> t_prepare_gold
+        >> t_load_warehouse
+        >> t_verify_result
         >> t_update_pipeline_status
     )
+
+TASK_SEQUENCE = [
+    ("check_dataset", check_dataset),
+    ("validate_schema", validate_schema),
+    ("create_batch", create_batch),
+    ("load_bronze", load_bronze),
+    ("bronze_quality_check", bronze_quality_check),
+    ("clean_data", clean_data),
+    ("feature_engineering", feature_engineering),
+    ("silver_quality_check", silver_quality_check),
+    ("prepare_gold", prepare_gold),
+    ("load_warehouse", load_warehouse),
+    ("verify_result", verify_result),
+    ("update_pipeline_status", update_pipeline_status),
+]

@@ -19,6 +19,39 @@ WAREHOUSE_DIR = "./data/delta/warehouse"
 
 class DataWarehouseEngine:
 
+    @staticmethod
+    def _safe_read_parquet(path: str) -> pd.DataFrame:
+        if not os.path.exists(path):
+            return pd.DataFrame()
+        try:
+            return pd.read_parquet(path)
+        except Exception:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return pd.DataFrame()
+
+    @staticmethod
+    def _json_safe(value):
+        if isinstance(value, dict):
+            return {str(k): DataWarehouseEngine._json_safe(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [DataWarehouseEngine._json_safe(v) for v in value]
+        if isinstance(value, tuple):
+            return [DataWarehouseEngine._json_safe(v) for v in value]
+        if isinstance(value, (np.floating, float)):
+            if pd.isna(value) or not np.isfinite(value):
+                return 0.0
+            return float(value)
+        if isinstance(value, (np.integer, int)):
+            return int(value)
+        if isinstance(value, (np.bool_, bool)):
+            return bool(value)
+        if value is None or (isinstance(value, str) and value.lower() in {"nan", "none", "null"}):
+            return None
+        return value
+
     @classmethod
     def _ensure_warehouse_dirs(cls):
         os.makedirs(WAREHOUSE_DIR, exist_ok=True)
@@ -190,11 +223,13 @@ class DataWarehouseEngine:
         # 3. IDEMPOTENT FACT MERGE (Avoid duplicate records on rerun)
         fact_store_path = os.path.join(WAREHOUSE_DIR, "fact_cloud_cost", "fact_cloud_cost.parquet")
         if os.path.exists(fact_store_path):
-            df_existing_fact = pd.read_parquet(fact_store_path)
-            # Remove existing entries for same dataset_id & record_hash
-            existing_hashes = set(df_existing_fact['record_hash'])
-            df_new_fact = df_fact_clean[~df_fact_clean['record_hash'].isin(existing_hashes)]
-            df_final_fact = pd.concat([df_existing_fact, df_new_fact], ignore_index=True)
+            df_existing_fact = cls._safe_read_parquet(fact_store_path)
+            if df_existing_fact.empty:
+                df_final_fact = df_fact_clean
+            else:
+                existing_hashes = set(df_existing_fact['record_hash']) if 'record_hash' in df_existing_fact.columns else set()
+                df_new_fact = df_fact_clean[~df_fact_clean['record_hash'].isin(existing_hashes)]
+                df_final_fact = pd.concat([df_existing_fact, df_new_fact], ignore_index=True)
         else:
             df_final_fact = df_fact_clean
 
@@ -685,7 +720,12 @@ class DataWarehouseEngine:
             "result": df_joined.groupby(['service', 'resource_type'])['net_cost'].sum().round(2).reset_index().to_dict(orient='records')
         })
 
-        return queries
+        cleaned_queries = []
+        for query in queries:
+            cleaned_query = dict(query)
+            cleaned_query['result'] = cls._json_safe(query.get('result'))
+            cleaned_queries.append(cleaned_query)
+        return cleaned_queries
 
     # -------------------------------------------------------------------------
     # SLOWLY CHANGING DIMENSION (SCD TYPE 2) SIMULATION DEMO

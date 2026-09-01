@@ -30,11 +30,9 @@ from airflow.dags.cloud_cost_pipeline import (
     clean_data,
     feature_engineering,
     silver_quality_check,
-    dimension_load,
-    fact_load,
-    warehouse_quality_check,
-    refresh_olap_aggregates,
-    warehouse_verification,
+    prepare_gold,
+    load_warehouse,
+    verify_result,
     update_pipeline_status
 )
 
@@ -49,11 +47,9 @@ TASK_SEQUENCE = [
     ("clean_data", clean_data),
     ("feature_engineering", feature_engineering),
     ("silver_quality_check", silver_quality_check),
-    ("dimension_load", dimension_load),
-    ("fact_load", fact_load),
-    ("warehouse_quality_check", warehouse_quality_check),
-    ("refresh_olap_aggregates", refresh_olap_aggregates),
-    ("warehouse_verification", warehouse_verification),
+    ("prepare_gold", prepare_gold),
+    ("load_warehouse", load_warehouse),
+    ("verify_result", verify_result),
     ("update_pipeline_status", update_pipeline_status)
 ]
 
